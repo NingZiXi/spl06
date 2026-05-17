@@ -1,6 +1,7 @@
-version: 1.4.1
+version: 0.1.0
 license: "MIT"
 description: spl06
+url: "https://github.com/NingZiXi/spl06"
 files:
   exclude:
     - .git
