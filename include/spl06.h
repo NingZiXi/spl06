@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -13,7 +13,7 @@ extern "C" {
 #define SPL06_I2C_ADDRESS_LOW      0x76
 #define SPL06_I2C_ADDRESS_HIGH     0x77
 #define SPL06_CHIP_ID              0x10
-#define SPL06_RESET_VALUE          0x89
+#define SPL06_RESET_VALUE          0x09
 #define SPL06_SEA_LEVEL_PA_DEFAULT 101325.0f
 
 typedef enum {
@@ -65,9 +65,10 @@ typedef struct {
 } spl06_calibration_t;
 
 typedef struct {
-    i2c_port_t i2c_port;
     uint8_t i2c_address;
     uint32_t timeout_ms;
+    uint32_t scl_speed_hz;
+    uint32_t scl_wait_us;
     spl06_mode_t mode;
     spl06_measurement_rate_t pressure_rate;
     spl06_oversampling_t pressure_oversampling;
@@ -77,10 +78,12 @@ typedef struct {
 } spl06_config_t;
 
 typedef struct {
-    i2c_port_t i2c_port;
+    i2c_master_bus_handle_t i2c_bus;
+    i2c_master_dev_handle_t i2c_dev;
     uint8_t i2c_address;
     uint8_t chip_id;
     uint32_t timeout_ms;
+    uint32_t scl_speed_hz;
     float pressure_scale_factor;
     float temperature_scale_factor;
     spl06_mode_t mode;
@@ -89,7 +92,8 @@ typedef struct {
 } spl06_t;
 
 void spl06_init_default_config(spl06_config_t *config);
-esp_err_t spl06_init(spl06_t *dev, const spl06_config_t *config);
+esp_err_t spl06_init(spl06_t *dev, i2c_master_bus_handle_t bus_handle, const spl06_config_t *config);
+esp_err_t spl06_deinit(spl06_t *dev);
 esp_err_t spl06_reset(spl06_t *dev);
 esp_err_t spl06_is_ready(spl06_t *dev, bool *ready);
 esp_err_t spl06_read_raw(spl06_t *dev, int32_t *raw_temperature, int32_t *raw_pressure);

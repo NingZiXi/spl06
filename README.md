@@ -7,7 +7,7 @@
 - 保证补偿算法正确、完整、可复用
 - 保持驱动和应用层低耦合
 
-I2C 总线由应用层负责初始化和管理。组件内部只保存与单个 SPL06 设备通信所需的 `i2c_port_t`、设备地址、超时参数、校准系数和运行状态。
+I2C 总线由应用层负责初始化和管理。组件内部只保存与单个 SPL06 设备通信所需的 `i2c_master_bus_handle_t`、`i2c_master_dev_handle_t`、设备地址、超时参数、校准系数和运行状态。
 
 英文版文档见 `README_EN.md`。
 
@@ -28,6 +28,7 @@ components/spl06/
 |-- CMakeLists.txt
 |-- README.md
 |-- README_EN.md
+|-- idf_component.yml
 |-- include/
 |   `-- spl06.h
 `-- spl06.c
@@ -39,9 +40,9 @@ components/spl06/
 
 这样做的好处是：
 
-- 如果你的板子有多条 I2C 总线，应用层可以自由选择任意 `i2c_port_t`
+- 如果你的板子有多条 I2C 总线，应用层可以自由管理任意 `i2c_master_bus_handle_t`
 - 如果多个传感器共用一条总线，总线资源仍由应用层统一管理
-- SPL06 组件本身只专注于 SPL06 的寄存器访问与补偿计算
+- SPL06 组件本身只专注于 SPL06 的设备创建、寄存器访问与补偿计算
 
 这也是比较规范的 ESP-IDF 传感器组件常见做法：总线归应用层管理，设备驱动只处理设备本身。
 
@@ -62,7 +63,8 @@ components/spl06/
 ### 主要函数
 
 - `spl06_init_default_config()`：填充一份默认配置
-- `spl06_init()`：复位设备、等待就绪、读取校准参数并应用配置
+- `spl06_init()`：基于已有 bus handle 创建设备、复位设备、等待就绪、读取校准参数并应用配置
+- `spl06_deinit()`：释放 SPL06 对应的 I2C device handle
 - `spl06_reset()`：执行软复位
 - `spl06_is_ready()`：读取传感器 ready 标志
 - `spl06_read_raw()`：读取原始 24 位温度和气压值
@@ -75,9 +77,10 @@ components/spl06/
 
 `spl06_init_default_config()` 当前设置如下：
 
-- I2C 端口：`I2C_NUM_0`
 - I2C 地址：`0x76`
 - 通信超时：`100 ms`
+- 设备时钟：`400 kHz`
+- `scl_wait_us`：`0`
 - 工作模式：连续测量温度和气压
 - 气压测量速率：`4 Hz`
 - 气压过采样：`16x`
@@ -91,7 +94,7 @@ components/spl06/
 
 `spl06_init()` 会按以下顺序执行：
 
-1. 清空并初始化设备句柄
+1. 基于应用层传入的 `i2c_master_bus_handle_t` 创建设备句柄
 2. 发送软复位命令
 3. 轮询 `MEAS_CFG`，直到传感器 ready 和系数 ready 标志都置位
 4. 读取芯片 ID，并校验是否等于 `SPL06_CHIP_ID`
@@ -121,49 +124,49 @@ components/spl06/
 在调用 `spl06_init()` 之前，应用层必须已经完成：
 
 - 选择 I2C 引脚
-- 配置 I2C 主机参数
-- 安装 ESP-IDF 的 I2C 驱动
+- 配置 I2C master bus 参数
+- 通过 `i2c_new_master_bus()` 创建 bus handle
 
-本组件当前使用的是 `driver/i2c.h` 提供的经典 ESP-IDF I2C 主机 API。
+本组件当前使用的是 `driver/i2c_master.h` 提供的新 I2C master API。
 
 ## 最小使用示例
 
 ```c
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "spl06.h"
 
 #define EXAMPLE_I2C_PORT I2C_NUM_0
 
-static void app_init_i2c(void)
+static void app_init_i2c(i2c_master_bus_handle_t *bus_handle)
 {
-    const i2c_config_t i2c_cfg = {
-        .mode = I2C_MODE_MASTER,
+    const i2c_master_bus_config_t i2c_cfg = {
+        .i2c_port = EXAMPLE_I2C_PORT,
         .sda_io_num = GPIO_NUM_8,
         .scl_io_num = GPIO_NUM_9,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 400000,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
     };
 
-    ESP_ERROR_CHECK(i2c_param_config(EXAMPLE_I2C_PORT, &i2c_cfg));
-    ESP_ERROR_CHECK(i2c_driver_install(EXAMPLE_I2C_PORT, I2C_MODE_MASTER, 0, 0, 0));
+    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_cfg, bus_handle));
 }
 
 void app_main(void)
 {
+    i2c_master_bus_handle_t bus_handle = NULL;
     spl06_t dev;
     spl06_config_t cfg;
     float temperature_c;
     float pressure_pa;
 
-    app_init_i2c();
+    app_init_i2c(&bus_handle);
 
     spl06_init_default_config(&cfg);
-    cfg.i2c_port = EXAMPLE_I2C_PORT;
     cfg.i2c_address = SPL06_I2C_ADDRESS_LOW;
+    cfg.scl_speed_hz = 400000;
 
-    ESP_ERROR_CHECK(spl06_init(&dev, &cfg));
+    ESP_ERROR_CHECK(spl06_init(&dev, bus_handle, &cfg));
 
     while (1) {
         if (spl06_read_temperature_pressure(&dev, &temperature_c, &pressure_pa) == ESP_OK) {
@@ -198,7 +201,7 @@ float altitude_m = spl06_calculate_altitude(pressure_pa, SPL06_SEA_LEVEL_PA_DEFA
 ## 关于 ESP-IDF 5.5.1
 
 - 本组件按 ESP-IDF 5.5.1 编写
-- 当前使用 `driver/i2c.h` 的经典 I2C 主机接口
+- 当前使用 `driver/i2c_master.h` 的新 I2C 主机接口
 - 工程里的 `main.c` 已带一个简单轮询示例，可直接作为接入起点
 
 ## 当前限制

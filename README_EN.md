@@ -7,7 +7,7 @@ This component is designed around two goals:
 - Keep the compensation algorithm correct and self-contained.
 - Keep the driver low-coupled with the rest of the application.
 
-The application owns the I2C bus. The component only stores the `i2c_port_t`, device address, timeout, calibration data, and runtime state required to talk to one SPL06 sensor.
+The application owns the I2C bus. The component only stores the `i2c_master_bus_handle_t`, `i2c_master_dev_handle_t`, device address, timeout, calibration data, and runtime state required to talk to one SPL06 sensor.
 
 For the Chinese version, see `README.md`.
 
@@ -28,6 +28,7 @@ components/spl06/
 |-- CMakeLists.txt
 |-- README.md
 |-- README_EN.md
+|-- idf_component.yml
 |-- include/
 |   `-- spl06.h
 `-- spl06.c
@@ -39,9 +40,9 @@ This component intentionally does not create or destroy the I2C driver internall
 
 That means:
 
-- If your board has multiple I2C buses, the application can choose any `i2c_port_t`
+- If your board has multiple I2C buses, the application can manage any `i2c_master_bus_handle_t`
 - If multiple sensors share the same bus, bus ownership remains in the application layer
-- The SPL06 component stays focused on SPL06 register access and compensation logic
+- The SPL06 component stays focused on SPL06 device creation, register access, and compensation logic
 
 This is the same general direction often used by well-structured ESP-IDF sensor drivers: the bus is configured by the app, and the device driver is only responsible for the device.
 
@@ -62,7 +63,8 @@ The public API is declared in `include/spl06.h`.
 ### Main Functions
 
 - `spl06_init_default_config()`: fill a config struct with safe defaults
-- `spl06_init()`: reset device, wait until ready, read calibration, apply configuration
+- `spl06_init()`: create a device from an existing bus handle, reset device, wait until ready, read calibration, and apply configuration
+- `spl06_deinit()`: remove the SPL06 I2C device handle
 - `spl06_reset()`: issue sensor soft reset
 - `spl06_is_ready()`: read the sensor ready flags
 - `spl06_read_raw()`: read raw 24-bit temperature/pressure values
@@ -75,9 +77,10 @@ The public API is declared in `include/spl06.h`.
 
 `spl06_init_default_config()` currently sets:
 
-- I2C port: `I2C_NUM_0`
 - I2C address: `0x76`
 - Timeout: `100 ms`
+- Device clock: `400 kHz`
+- `scl_wait_us`: `0`
 - Mode: continuous pressure + temperature
 - Pressure rate: `4 Hz`
 - Pressure oversampling: `16x`
@@ -91,7 +94,7 @@ These defaults are intended to be a reasonable starting point, not a universal o
 
 `spl06_init()` performs the following steps:
 
-1. Clear and initialize the device handle
+1. Create the device handle from the `i2c_master_bus_handle_t` provided by the application
 2. Issue a soft reset
 3. Poll `MEAS_CFG` until both sensor-ready and coefficient-ready flags are set
 4. Read chip ID and verify it matches `SPL06_CHIP_ID`
@@ -121,49 +124,49 @@ This avoids a very common SPL06 bug source: incorrect sign handling during coeff
 Before calling `spl06_init()`, the application must already have:
 
 - selected the I2C pins
-- configured the I2C master parameters
-- installed the ESP-IDF I2C driver
+- configured the I2C master bus parameters
+- created the bus handle with `i2c_new_master_bus()`
 
-This component uses the classic ESP-IDF I2C API from `driver/i2c.h`.
+This component uses the new ESP-IDF I2C master API from `driver/i2c_master.h`.
 
 ## Minimal Usage Example
 
 ```c
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "spl06.h"
 
 #define EXAMPLE_I2C_PORT I2C_NUM_0
 
-static void app_init_i2c(void)
+static void app_init_i2c(i2c_master_bus_handle_t *bus_handle)
 {
-    const i2c_config_t i2c_cfg = {
-        .mode = I2C_MODE_MASTER,
+    const i2c_master_bus_config_t i2c_cfg = {
+        .i2c_port = EXAMPLE_I2C_PORT,
         .sda_io_num = GPIO_NUM_8,
         .scl_io_num = GPIO_NUM_9,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 400000,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
     };
 
-    ESP_ERROR_CHECK(i2c_param_config(EXAMPLE_I2C_PORT, &i2c_cfg));
-    ESP_ERROR_CHECK(i2c_driver_install(EXAMPLE_I2C_PORT, I2C_MODE_MASTER, 0, 0, 0));
+    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_cfg, bus_handle));
 }
 
 void app_main(void)
 {
+    i2c_master_bus_handle_t bus_handle = NULL;
     spl06_t dev;
     spl06_config_t cfg;
     float temperature_c;
     float pressure_pa;
 
-    app_init_i2c();
+    app_init_i2c(&bus_handle);
 
     spl06_init_default_config(&cfg);
-    cfg.i2c_port = EXAMPLE_I2C_PORT;
     cfg.i2c_address = SPL06_I2C_ADDRESS_LOW;
+    cfg.scl_speed_hz = 400000;
 
-    ESP_ERROR_CHECK(spl06_init(&dev, &cfg));
+    ESP_ERROR_CHECK(spl06_init(&dev, bus_handle, &cfg));
 
     while (1) {
         if (spl06_read_temperature_pressure(&dev, &temperature_c, &pressure_pa) == ESP_OK) {
@@ -198,7 +201,7 @@ Choose the address that matches your board wiring.
 ## Notes For ESP-IDF 5.5.1
 
 - This component is written for ESP-IDF 5.5.1
-- It currently uses the classic master I2C API from `driver/i2c.h`
+- It currently uses the new master I2C API from `driver/i2c_master.h`
 - The project `main.c` already includes a simple polling demo that can be used as a starting point
 
 ## Limitations

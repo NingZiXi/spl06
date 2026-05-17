@@ -7,23 +7,23 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define SPL06_REG_PRESSURE_MSB   0x00
+#define SPL06_REG_PRESSURE_MSB    0x00
 #define SPL06_REG_TEMPERATURE_MSB 0x03
-#define SPL06_REG_PRS_CFG        0x06
-#define SPL06_REG_TMP_CFG        0x07
-#define SPL06_REG_MEAS_CFG       0x08
-#define SPL06_REG_CFG_REG        0x09
-#define SPL06_REG_RESET          0x0C
-#define SPL06_REG_CHIP_ID        0x0D
-#define SPL06_REG_CALIB          0x10
+#define SPL06_REG_PRS_CFG         0x06
+#define SPL06_REG_TMP_CFG         0x07
+#define SPL06_REG_MEAS_CFG        0x08
+#define SPL06_REG_CFG_REG         0x09
+#define SPL06_REG_RESET           0x0C
+#define SPL06_REG_CHIP_ID         0x0D
+#define SPL06_REG_CALIB           0x10
 
-#define SPL06_MEAS_CFG_COEF_RDY  BIT(7)
+#define SPL06_MEAS_CFG_COEF_RDY   BIT(7)
 #define SPL06_MEAS_CFG_SENSOR_RDY BIT(6)
-#define SPL06_CFG_T_SHIFT        BIT(3)
-#define SPL06_CFG_P_SHIFT        BIT(2)
+#define SPL06_CFG_T_SHIFT         BIT(3)
+#define SPL06_CFG_P_SHIFT         BIT(2)
 
-#define SPL06_READY_RETRIES      20
-#define SPL06_READY_DELAY_MS     10
+#define SPL06_READY_RETRIES       20
+#define SPL06_READY_DELAY_MS      10
 
 #define SPL06_CHECK_ARG(expr) do { \
     if (!(expr)) { \
@@ -42,11 +42,6 @@ static const float s_scale_factors[] = {
     2088960.0f,
 };
 
-static TickType_t spl06_timeout_ticks(const spl06_t *dev)
-{
-    return pdMS_TO_TICKS(dev->timeout_ms);
-}
-
 static int32_t spl06_sign_extend(uint32_t value, uint8_t bits)
 {
     const uint32_t sign_bit = 1UL << (bits - 1U);
@@ -63,38 +58,17 @@ static esp_err_t spl06_write_reg(spl06_t *dev, uint8_t reg, uint8_t value)
 {
     uint8_t buffer[2] = { reg, value };
 
-    return i2c_master_write_to_device(dev->i2c_port, dev->i2c_address, buffer, sizeof(buffer),
-                                      spl06_timeout_ticks(dev));
+    return i2c_master_transmit(dev->i2c_dev, buffer, sizeof(buffer), (int)dev->timeout_ms);
 }
 
 static esp_err_t spl06_read_reg(spl06_t *dev, uint8_t reg, uint8_t *data, size_t len)
 {
-    return i2c_master_write_read_device(dev->i2c_port, dev->i2c_address, &reg, sizeof(reg), data, len,
-                                        spl06_timeout_ticks(dev));
+    return i2c_master_transmit_receive(dev->i2c_dev, &reg, sizeof(reg), data, len, (int)dev->timeout_ms);
 }
 
 static esp_err_t spl06_read_chip_id(spl06_t *dev, uint8_t *chip_id)
 {
     return spl06_read_reg(dev, SPL06_REG_CHIP_ID, chip_id, 1);
-}
-
-static esp_err_t spl06_wait_ready(spl06_t *dev)
-{
-    uint8_t meas_cfg = 0;
-
-    for (int retry = 0; retry < SPL06_READY_RETRIES; retry++) {
-        ESP_RETURN_ON_ERROR(spl06_read_reg(dev, SPL06_REG_MEAS_CFG, &meas_cfg, 1), "spl06",
-                            "failed to read measurement status");
-
-        if ((meas_cfg & (SPL06_MEAS_CFG_COEF_RDY | SPL06_MEAS_CFG_SENSOR_RDY)) ==
-            (SPL06_MEAS_CFG_COEF_RDY | SPL06_MEAS_CFG_SENSOR_RDY)) {
-            return ESP_OK;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(SPL06_READY_DELAY_MS));
-    }
-
-    return ESP_ERR_TIMEOUT;
 }
 
 static esp_err_t spl06_read_calibration(spl06_t *dev)
@@ -181,9 +155,10 @@ void spl06_init_default_config(spl06_config_t *config)
     }
 
     *config = (spl06_config_t) {
-        .i2c_port = I2C_NUM_0,
         .i2c_address = SPL06_I2C_ADDRESS_LOW,
         .timeout_ms = 100,
+        .scl_speed_hz = 400000,
+        .scl_wait_us = 0,
         .mode = SPL06_MODE_CONTINUOUS_PRESSURE_TEMPERATURE,
         .pressure_rate = SPL06_MEAS_RATE_4_HZ,
         .pressure_oversampling = SPL06_OVERSAMPLING_16,
@@ -193,35 +168,67 @@ void spl06_init_default_config(spl06_config_t *config)
     };
 }
 
-esp_err_t spl06_init(spl06_t *dev, const spl06_config_t *config)
+esp_err_t spl06_init(spl06_t *dev, i2c_master_bus_handle_t bus_handle, const spl06_config_t *config)
 {
+    esp_err_t ret = ESP_OK;
+    i2c_device_config_t device_config = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = config ? config->i2c_address : 0,
+        .scl_speed_hz = config ? config->scl_speed_hz : 0,
+        .scl_wait_us = config ? config->scl_wait_us : 0,
+    };
+
     SPL06_CHECK_ARG(dev);
+    SPL06_CHECK_ARG(bus_handle);
     SPL06_CHECK_ARG(config);
 
     memset(dev, 0, sizeof(*dev));
-    dev->i2c_port = config->i2c_port;
+    dev->i2c_bus = bus_handle;
     dev->i2c_address = config->i2c_address;
     dev->timeout_ms = config->timeout_ms;
+    dev->scl_speed_hz = config->scl_speed_hz;
 
-    ESP_RETURN_ON_ERROR(spl06_reset(dev), "spl06", "failed to reset sensor");
-    ESP_RETURN_ON_ERROR(spl06_wait_ready(dev), "spl06", "sensor is not ready");
-    ESP_RETURN_ON_ERROR(spl06_read_chip_id(dev, &dev->chip_id), "spl06", "failed to read chip id");
+    ESP_GOTO_ON_ERROR(i2c_master_bus_add_device(bus_handle, &device_config, &dev->i2c_dev), cleanup, "spl06",
+                      "failed to add i2c device");
+    ESP_GOTO_ON_ERROR(spl06_read_chip_id(dev, &dev->chip_id), cleanup, "spl06", "failed to read chip id");
 
     if (dev->chip_id != SPL06_CHIP_ID) {
-        return ESP_ERR_NOT_FOUND;
+        ret = ESP_ERR_NOT_FOUND;
+        goto cleanup;
     }
 
-    ESP_RETURN_ON_ERROR(spl06_read_calibration(dev), "spl06", "failed to load calibration");
-    ESP_RETURN_ON_ERROR(spl06_apply_config(dev, config), "spl06", "failed to configure sensor");
+    ESP_GOTO_ON_ERROR(spl06_read_calibration(dev), cleanup, "spl06", "failed to load calibration");
+    ESP_GOTO_ON_ERROR(spl06_apply_config(dev, config), cleanup, "spl06", "failed to configure sensor");
+    vTaskDelay(pdMS_TO_TICKS(SPL06_READY_DELAY_MS));
 
     dev->initialized = true;
 
+    return ESP_OK;
+
+cleanup:
+    if (dev->i2c_dev) {
+        i2c_master_bus_rm_device(dev->i2c_dev);
+    }
+    memset(dev, 0, sizeof(*dev));
+    return ret;
+}
+
+esp_err_t spl06_deinit(spl06_t *dev)
+{
+    SPL06_CHECK_ARG(dev);
+
+    if (dev->i2c_dev) {
+        ESP_RETURN_ON_ERROR(i2c_master_bus_rm_device(dev->i2c_dev), "spl06", "failed to remove i2c device");
+    }
+
+    memset(dev, 0, sizeof(*dev));
     return ESP_OK;
 }
 
 esp_err_t spl06_reset(spl06_t *dev)
 {
     SPL06_CHECK_ARG(dev);
+    SPL06_CHECK_ARG(dev->i2c_dev);
 
     ESP_RETURN_ON_ERROR(spl06_write_reg(dev, SPL06_REG_RESET, SPL06_RESET_VALUE), "spl06",
                         "failed to write reset");
@@ -235,6 +242,7 @@ esp_err_t spl06_is_ready(spl06_t *dev, bool *ready)
     uint8_t meas_cfg = 0;
 
     SPL06_CHECK_ARG(dev);
+    SPL06_CHECK_ARG(dev->i2c_dev);
     SPL06_CHECK_ARG(ready);
 
     ESP_RETURN_ON_ERROR(spl06_read_reg(dev, SPL06_REG_MEAS_CFG, &meas_cfg, 1), "spl06",
