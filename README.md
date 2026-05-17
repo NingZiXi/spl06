@@ -44,7 +44,7 @@
 
 ### 1. 获取组件
 
-发布到组件仓库后可使用：
+要将组件添加到项目中请在 IDF 终端执行下方命令：
 
 ```bash
 idf.py add-dependency "ningzixi/spl06^0.1.0"

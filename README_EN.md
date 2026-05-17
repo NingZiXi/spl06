@@ -44,7 +44,7 @@ This component targets `ESP-IDF 5.5.1+` and uses the new `driver/i2c_master.h` A
 
 ### 1. Get The Component
 
-After publishing to the component registry:
+To add the component to your project, run the following command in the ESP-IDF terminal:
 
 ```bash
 idf.py add-dependency "ningzixi/spl06^0.1.0"
