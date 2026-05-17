@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 NingZiXi
+ * SPDX-License-Identifier: MIT
+ */
+
 #include "spl06.h"
 
 #include <math.h>

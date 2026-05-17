@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 NingZiXi
+ * SPDX-License-Identifier: MIT
+ */
+
 #pragma once
 
 #include <stdbool.h>
