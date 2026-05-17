@@ -2,7 +2,7 @@
   <img src="./image.png" alt="SPL06 Poster" />
 </p>
 
-<h1 align="center">🌡️ SPL06 ESP-IDF Component</h1>
+<h1 align="center">🌡️ SPL06 Driver</h1>
 
 <p align="center">
 一个适用于 ESP-IDF 的 SPL06 气压/温度传感器组件<br/>

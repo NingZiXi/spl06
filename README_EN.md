@@ -2,7 +2,7 @@
   <img src="./image.png" alt="SPL06 Poster" />
 </p>
 
-<h1 align="center">🌡️ SPL06 ESP-IDF Component</h1>
+<h1 align="center">🌡️ SPL06 Driver</h1>
 
 <p align="center">
 An SPL06 pressure and temperature sensor component for ESP-IDF<br/>
