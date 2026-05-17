@@ -1,221 +1,151 @@
-# SPL06 ESP-IDF Component
+<p align="center">
+  <img src="./image.png" alt="SPL06 Poster" />
+</p>
 
-SPL06 pressure and temperature sensor driver component for ESP-IDF 5.5.1.
+<h1 align="center">🌡️ SPL06 ESP-IDF Component</h1>
 
-This component is designed around two goals:
+<p align="center">
+An SPL06 pressure and temperature sensor component for ESP-IDF<br/>
+Built with the new I2C driver, standard compensation flow, and a low-coupling API design
+</p>
 
-- Keep the compensation algorithm correct and self-contained.
-- Keep the driver low-coupled with the rest of the application.
+<p align="center">
+<a href="./README.md">简体中文</a>
+· English
+· <a href="https://github.com/NingZiXi/spl06/releases">Releases</a>
+· <a href="https://github.com/NingZiXi/spl06/issues">Issues</a>
+</p>
 
-The application owns the I2C bus. The component only stores the `i2c_master_bus_handle_t`, `i2c_master_dev_handle_t`, device address, timeout, calibration data, and runtime state required to talk to one SPL06 sensor.
+<p align="center">
+  <a href="./LICENSE">
+    <img alt="License" src="https://img.shields.io/badge/License-MIT-blue.svg" />
+  </a>
+  <a href="https://docs.espressif.com/projects/esp-idf/">
+    <img alt="ESP-IDF" src="https://img.shields.io/badge/ESP--IDF-v5.5.1+-orange.svg" />
+  </a>
+  <a href="https://www.espressif.com/">
+    <img alt="Platform" src="https://img.shields.io/badge/Platform-ESP32-green.svg" />
+  </a>
+  <a href="./idf_component.yml">
+    <img alt="Version" src="https://img.shields.io/badge/Version-v0.1.0-brightgreen.svg" />
+  </a>
+  <a href="https://github.com/NingZiXi/spl06/stargazers">
+    <img alt="GitHub Stars" src="https://img.shields.io/github/stars/NingZiXi/spl06.svg?style=social&label=Stars" />
+  </a>
+</p>
 
-For the Chinese version, see `README.md`.
+---
 
-## Features
+## 📌 Overview
 
-- Supports SPL06 over I2C
-- Supports both `0x76` and `0x77` addresses
-- Reads and parses the 18-byte factory calibration block
-- Applies correct sign extension for 12-bit, 20-bit, and 24-bit values
-- Provides compensated temperature and pressure output
-- Provides altitude estimation from pressure
-- Exposes a clean device handle and configuration API
+This component targets `ESP-IDF 5.5.1+` and uses the new `driver/i2c_master.h` API. It supports both `0x76` and `0x77` addresses, implements standard SPL06 calibration parsing, compensated temperature and pressure calculation, and altitude estimation. The design keeps I2C bus ownership in the application layer while the component manages the SPL06 device handle, making it suitable for reuse in release projects.
 
-## Directory Layout
+## 🛠️ Quick Start
 
-```text
-components/spl06/
-|-- CMakeLists.txt
-|-- README.md
-|-- README_EN.md
-|-- idf_component.yml
-|-- include/
-|   `-- spl06.h
-`-- spl06.c
+### 1. Get The Component
+
+After publishing to the component registry:
+
+```bash
+idf.py add-dependency "ningzixi/spl06^0.1.0"
 ```
 
-## Design Notes
+Or clone it into your project's `components` directory:
 
-This component intentionally does not create or destroy the I2C driver internally.
+```bash
+git clone https://github.com/NingZiXi/spl06.git
+```
 
-That means:
-
-- If your board has multiple I2C buses, the application can manage any `i2c_master_bus_handle_t`
-- If multiple sensors share the same bus, bus ownership remains in the application layer
-- The SPL06 component stays focused on SPL06 device creation, register access, and compensation logic
-
-This is the same general direction often used by well-structured ESP-IDF sensor drivers: the bus is configured by the app, and the device driver is only responsible for the device.
-
-## Public API
-
-The public API is declared in `include/spl06.h`.
-
-### Main Types
-
-- `spl06_t`: device handle and runtime state
-- `spl06_config_t`: initialization/configuration parameters
-- `spl06_calibration_t`: parsed factory calibration coefficients
-- `spl06_measurement_rate_t`: output data rate setting
-- `spl06_oversampling_t`: oversampling setting
-- `spl06_temperature_sensor_t`: internal or external temperature source
-- `spl06_mode_t`: standby, command mode, or continuous mode
-
-### Main Functions
-
-- `spl06_init_default_config()`: fill a config struct with safe defaults
-- `spl06_init()`: create a device from an existing bus handle, reset device, wait until ready, read calibration, and apply configuration
-- `spl06_deinit()`: remove the SPL06 I2C device handle
-- `spl06_reset()`: issue sensor soft reset
-- `spl06_is_ready()`: read the sensor ready flags
-- `spl06_read_raw()`: read raw 24-bit temperature/pressure values
-- `spl06_read_temperature()`: read compensated temperature in Celsius
-- `spl06_read_pressure()`: read compensated pressure in Pascal
-- `spl06_read_temperature_pressure()`: read both values in one call
-- `spl06_calculate_altitude()`: estimate altitude using pressure and sea-level pressure
-
-## Default Configuration
-
-`spl06_init_default_config()` currently sets:
-
-- I2C address: `0x76`
-- Timeout: `100 ms`
-- Device clock: `400 kHz`
-- `scl_wait_us`: `0`
-- Mode: continuous pressure + temperature
-- Pressure rate: `4 Hz`
-- Pressure oversampling: `16x`
-- Temperature rate: `4 Hz`
-- Temperature oversampling: `2x`
-- Temperature source: external sensor
-
-These defaults are intended to be a reasonable starting point, not a universal optimum.
-
-## Initialization Flow
-
-`spl06_init()` performs the following steps:
-
-1. Create the device handle from the `i2c_master_bus_handle_t` provided by the application
-2. Issue a soft reset
-3. Poll `MEAS_CFG` until both sensor-ready and coefficient-ready flags are set
-4. Read chip ID and verify it matches `SPL06_CHIP_ID`
-5. Read the 18-byte calibration data block from the sensor
-6. Parse all compensation coefficients
-7. Apply register configuration for rate, oversampling, shift bits, and mode
-
-## Compensation Logic
-
-The driver implements the standard SPL06 compensation chain:
-
-- Read raw temperature and pressure
-- Apply the SPL06 scaling factor that depends on oversampling
-- Use the factory coefficients `c0`, `c1`, `c00`, `c10`, `c01`, `c11`, `c20`, `c21`, and `c30`
-- Compute compensated temperature and pressure using the floating-point polynomial
-
-The implementation includes explicit sign extension for:
-
-- `c0`, `c1`: 12-bit signed values
-- `c00`, `c10`: 20-bit signed values
-- raw temperature and raw pressure: 24-bit signed values
-
-This avoids a very common SPL06 bug source: incorrect sign handling during coefficient parsing.
-
-## Application Responsibility
-
-Before calling `spl06_init()`, the application must already have:
-
-- selected the I2C pins
-- configured the I2C master bus parameters
-- created the bus handle with `i2c_new_master_bus()`
-
-This component uses the new ESP-IDF I2C master API from `driver/i2c_master.h`.
-
-## Minimal Usage Example
+### 2. Basic Usage
 
 ```c
 #include "driver/i2c_master.h"
 #include "esp_log.h"
 #include "spl06.h"
 
+#define EXAMPLE_I2C_SDA  GPIO_NUM_4
+#define EXAMPLE_I2C_SCL  GPIO_NUM_5
 #define EXAMPLE_I2C_PORT I2C_NUM_0
+#define EXAMPLE_I2C_FREQ 100000
 
-static void app_init_i2c(i2c_master_bus_handle_t *bus_handle)
+static i2c_master_bus_handle_t bus_handle;
+static spl06_t spl06;
+static const char *TAG = "spl06";
+
+static void init_i2c(void)
 {
-    const i2c_master_bus_config_t i2c_cfg = {
+    const i2c_master_bus_config_t bus_cfg = {
         .i2c_port = EXAMPLE_I2C_PORT,
-        .sda_io_num = GPIO_NUM_8,
-        .scl_io_num = GPIO_NUM_9,
+        .sda_io_num = EXAMPLE_I2C_SDA,
+        .scl_io_num = EXAMPLE_I2C_SCL,
         .clk_source = I2C_CLK_SRC_DEFAULT,
         .glitch_ignore_cnt = 7,
         .flags.enable_internal_pullup = true,
     };
 
-    ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_cfg, bus_handle));
+    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_cfg, &bus_handle));
 }
 
 void app_main(void)
 {
-    i2c_master_bus_handle_t bus_handle = NULL;
-    spl06_t dev;
     spl06_config_t cfg;
-    float temperature_c;
-    float pressure_pa;
+    float temperature_c = 0.0f;
+    float pressure_pa = 0.0f;
+    float altitude_m = 0.0f;
 
-    app_init_i2c(&bus_handle);
+    init_i2c();
 
     spl06_init_default_config(&cfg);
-    cfg.i2c_address = SPL06_I2C_ADDRESS_LOW;
-    cfg.scl_speed_hz = 400000;
+    cfg.i2c_address = SPL06_I2C_ADDRESS_HIGH;
+    cfg.scl_speed_hz = EXAMPLE_I2C_FREQ;
 
-    ESP_ERROR_CHECK(spl06_init(&dev, bus_handle, &cfg));
+    ESP_ERROR_CHECK(spl06_init(&spl06, bus_handle, &cfg));
 
-    while (1) {
-        if (spl06_read_temperature_pressure(&dev, &temperature_c, &pressure_pa) == ESP_OK) {
-            ESP_LOGI("spl06", "T=%.2f C, P=%.2f Pa", temperature_c, pressure_pa);
+    while (true) {
+        if (spl06_read_temperature_pressure(&spl06, &temperature_c, &pressure_pa) == ESP_OK) {
+            altitude_m = spl06_calculate_altitude(pressure_pa, SPL06_SEA_LEVEL_PA_DEFAULT);
+            ESP_LOGI(TAG, "Temperature: %.2f C, Pressure: %.2f Pa, Altitude: %.2f m",
+                     temperature_c, pressure_pa, altitude_m);
         }
+
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 ```
 
-## Altitude Calculation
+### 3. Example Output
 
-Use:
-
-```c
-float altitude_m = spl06_calculate_altitude(pressure_pa, SPL06_SEA_LEVEL_PA_DEFAULT);
+```text
+I (1234) spl06: Temperature: 31.76 C, Pressure: 100814.94 Pa, Altitude: 42.55 m
 ```
 
-`SPL06_SEA_LEVEL_PA_DEFAULT` is the standard sea-level pressure value `101325 Pa`.
+See `include/spl06.h` for the full API.
 
-For better altitude accuracy, use the local sea-level pressure for your area instead of the standard atmosphere constant.
+## 📚 Main APIs
 
-## Address Selection
+- `spl06_init_default_config()`
+- `spl06_init()`
+- `spl06_deinit()`
+- `spl06_read_temperature()`
+- `spl06_read_pressure()`
+- `spl06_read_temperature_pressure()`
+- `spl06_calculate_altitude()`
 
-The component defines:
+## ⚙️ Default Configuration
 
-- `SPL06_I2C_ADDRESS_LOW` = `0x76`
-- `SPL06_I2C_ADDRESS_HIGH` = `0x77`
+- Address: `0x76`
+- Timeout: `100 ms`
+- Mode: continuous pressure and temperature
+- Pressure: `4 Hz`, `16x`
+- Temperature: `4 Hz`, `2x`
+- Temperature source: external sensor
 
-Choose the address that matches your board wiring.
+## 📝 Notes
 
-## Notes For ESP-IDF 5.5.1
+- The component validates `chip id = 0x10`
+- The application is responsible for creating and managing the I2C bus
+- If your module uses `0x77`, set `SPL06_I2C_ADDRESS_HIGH`
 
-- This component is written for ESP-IDF 5.5.1
-- It currently uses the new master I2C API from `driver/i2c_master.h`
-- The project `main.c` already includes a simple polling demo that can be used as a starting point
+## 📄 License
 
-## Limitations
-
-- No interrupt mode
-- No FIFO support
-- No forced-conversion helper yet
-- No SPI support yet
-- No automated unit tests in this demo project yet
-
-## Suggested Next Improvements
-
-- Add a dedicated forced-measurement API
-- Add an example under `examples/`
-- Add Kconfig options for default address and timeout
-- Add a helper for pressure unit conversion, such as Pa to hPa
-- Add CI build validation when the ESP-IDF environment is available
+This project is licensed under the MIT License. See [LICENSE](./LICENSE) for details.
