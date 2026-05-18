@@ -149,3 +149,8 @@ See `include/spl06.h` for the full API.
 ## 📄 License
 
 This project is licensed under the MIT License. See [LICENSE](./LICENSE) for details.
+
+<p align="center">
+Thanks for using SPL06 Driver! 🌡️<br/>
+If this project helps you, please consider giving it a ⭐ Star!
+</p>

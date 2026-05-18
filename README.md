@@ -149,3 +149,8 @@ I (1234) spl06: Temperature: 31.76 C, Pressure: 100814.94 Pa, Altitude: 42.55 m
 ## 📄 许可证
 
 本项目采用 MIT 许可证，详情请参阅 [LICENSE](./LICENSE)。
+
+<p align="center">
+感谢您使用 SPL06 Driver！🌡️<br/>
+如果觉得项目对您有帮助，请给个 ⭐ Star 支持一下！
+</p>
